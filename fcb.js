@@ -9,11 +9,13 @@
 // @match        https://facebook.com/*
 // @grant        none
 // @run-at       document-end
+
 // @homepageURL  https://github.com/cadot-eu/facebook-cleaner
 // @supportURL   https://github.com/cadot-eu/facebook-cleaner/issues
 // @downloadURL  https://raw.githubusercontent.com/cadot-eu/facebook-cleaner/main/fcb.js
 // @updateURL    https://raw.githubusercontent.com/cadot-eu/facebook-cleaner/main/fcb.js
 // @icon         https://raw.githubusercontent.com/cadot-eu/facebook-cleaner/main/icon.png
+// @installURL   https://greasyfork.org/fr/scripts/545074-facebook-cleaner-block-group-invites-spam
 //
 // ==/UserScript==
 
@@ -24,8 +26,10 @@
  *  - Robust: adapts to Facebook layout changes, cleans up all post fragments.
  *  - Privacy-friendly: runs only in your browser, stores nothing online.
  *
- *  ➡️  To install or update, open this link in Tampermonkey:
- *  https://github.com/cadot-eu/facebook-cleaner/raw/main/fcb.js
+ *  ➡️  To install or update, use the official GreasyFork page:
+ *  https://greasyfork.org/fr/scripts/545074-facebook-cleaner-block-group-invites-spam
+ *
+ *  (Or for manual install: https://github.com/cadot-eu/facebook-cleaner/raw/main/fcb.js)
  *
  *  📦  GitHub & Documentation:
  *  https://github.com/cadot-eu/facebook-cleaner
@@ -72,6 +76,66 @@
     let elementsMarques = new WeakSet(); // Pour éviter de retraiter les mêmes éléments
     let textesBloquesCache = new Set(); // Cache des textes déjà identifiés comme à bloquer
 
+    // État d'activation du script
+    let scriptActif = localStorage.getItem('fcb-script-actif') !== 'false'; // Actif par défaut
+
+    // Options du script avec localStorage
+    let options = {
+        supprimerColonneDroite: localStorage.getItem('fcb-option-colonne-droite') === 'true',
+        // Ici on pourra ajouter d'autres options facilement
+    };
+
+    // Fonction pour sauvegarder les options
+    function sauvegarderOptions() {
+        localStorage.setItem('fcb-option-colonne-droite', options.supprimerColonneDroite);
+        console.log('Options sauvegardées:', options);
+    }
+
+    // Fonction pour appliquer les modifications CSS selon les options
+    function appliquerOptionsCSS() {
+        // Supprimer les styles précédents
+        const ancienStyle = document.getElementById('fcb-options-styles');
+        if (ancienStyle) ancienStyle.remove();
+
+        // Créer un nouveau style
+        const style = document.createElement('style');
+        style.id = 'fcb-options-styles';
+        let css = '';
+
+        if (options.supprimerColonneDroite) {
+            css += `
+                /* Masquer la colonne de droite */
+                div[role="complementary"] {
+                    display: none !important;
+                }
+                
+                /* Agrandir la zone principale pour occuper l'espace libéré */
+                div[role="main"] {
+                    max-width: none !important;
+                    width: calc(100% - 360px) !important;
+                    margin-left: 360px !important;
+                    margin-right: 0 !important;
+                }
+                
+                /* Agrandir le conteneur du feed */
+                div[role="feed"] {
+                    max-width: none !important;
+                    width: 100% !important;
+                    padding-right: 20px !important;
+                }
+                
+                /* Ajuster les posts pour qu'ils utilisent toute la largeur disponible */
+                div[role="feed"] > div {
+                    max-width: none !important;
+                    width: 100% !important;
+                }
+            `;
+        }
+
+        style.textContent = css;
+        document.head.appendChild(style);
+    }
+
     function contientPhraseBloquee(texte) {
         const texteNormalise = texte.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         return phrasesABloquer.some(phrase =>
@@ -80,137 +144,98 @@
     }
 
     function masquerPost(element) {
-        if (element && !elementsMarques.has(element)) {
-            // Marquage permanent
-            element.setAttribute('data-blocked-by-script', 'true');
-            element.classList.add('script-blocked-post');
-            elementsMarques.add(element);
-
-            // Styles de masquage multiples pour résistance
-            element.style.setProperty('display', 'none', 'important');
-            element.style.setProperty('visibility', 'hidden', 'important');
-            element.style.setProperty('height', '0px', 'important');
-            element.style.setProperty('overflow', 'hidden', 'important');
-            element.style.setProperty('opacity', '0', 'important');
-            element.style.setProperty('max-height', '0px', 'important');
-
-            // Observer si l'élément est modifié pour le re-masquer
-            const elementObserver = new MutationObserver(function () {
-                if (element.style.display !== 'none') {
-                    element.style.setProperty('display', 'none', 'important');
-                    element.style.setProperty('visibility', 'hidden', 'important');
-                }
-            });
-
-            elementObserver.observe(element, {
-                attributes: true,
-                attributeFilter: ['style', 'class']
-            });
-
-            // Debug: informations sur l'élément masqué
-            console.log('Post bloqué et marqué:', {
-                element: element,
-                tagName: element.tagName,
-                classes: element.className,
-                dimensions: `${element.offsetWidth}x${element.offsetHeight}`,
-                textLength: (element.textContent || '').length,
-                hasDataTestId: element.hasAttribute('data-testid'),
-                hasDataPagelet: element.hasAttribute('data-pagelet')
-            });
-
-            return true;
+        if (!element || elementsMarques.has(element)) return false;
+        // Sécurité : ne jamais masquer <body> ou <html>
+        if (element === document.body || element === document.documentElement) {
+            console.warn('Sécurité : tentative de masquage de <body> ou <html> bloquée');
+            return false;
         }
-        return false;
+        // Marquage permanent
+        element.setAttribute('data-blocked-by-script', 'true');
+        element.classList.add('script-blocked-post');
+        elementsMarques.add(element);
+
+        // Styles de masquage multiples pour résistance
+        element.style.setProperty('display', 'none', 'important');
+        element.style.setProperty('visibility', 'hidden', 'important');
+        element.style.setProperty('height', '0px', 'important');
+        element.style.setProperty('overflow', 'hidden', 'important');
+        element.style.setProperty('opacity', '0', 'important');
+        element.style.setProperty('max-height', '0px', 'important');
+
+        // Observer si l'élément est modifié pour le re-masquer
+        const elementObserver = new MutationObserver(function () {
+            if (element.style.display !== 'none') {
+                element.style.setProperty('display', 'none', 'important');
+                element.style.setProperty('visibility', 'hidden', 'important');
+            }
+        });
+
+        elementObserver.observe(element, {
+            attributes: true,
+            attributeFilter: ['style', 'class']
+        });
+
+        // Debug: informations sur l'élément masqué
+        console.log('Post bloqué et marqué:', {
+            element: element,
+            tagName: element.tagName,
+            classes: element.className,
+            dimensions: `${element.offsetWidth}x${element.offsetHeight}`,
+            textLength: (element.textContent || '').length,
+            hasDataTestId: element.hasAttribute('data-testid'),
+            hasDataPagelet: element.hasAttribute('data-pagelet')
+        });
+
+        return true;
     }
 
     function trouverPostParent(element) {
-        let parent = element;
-        let tentatives = 0;
-        const maxTentatives = 20; // Augmenter pour remonter plus haut
+        // APPROCHE SIMPLIFIÉE : avec les menus actions, on a déjà de bons conteneurs
+        // Cette fonction ne fait plus que des vérifications de sécurité basiques
 
-        console.log('🔎 Recherche du parent pour:', element);
-
-        while (parent && parent !== document.body && tentatives < maxTentatives) {
-            tentatives++;
-
-            // Critères TRÈS sélectifs pour identifier un conteneur de post Facebook
-            const estPostContainer = (
-                // Attributs spécifiques Facebook (priorité absolue)
-                parent.getAttribute('role') === 'article' ||
-                parent.hasAttribute('data-pagelet') && parent.getAttribute('data-pagelet').includes('FeedUnit') ||
-                parent.hasAttribute('data-testid') && parent.getAttribute('data-testid').includes('story') ||
-                parent.classList.contains('userContentWrapper') ||
-                // Nouveaux critères pour capturer les posts plus larges
-                parent.hasAttribute('data-ft') ||
-                (parent.getAttribute('data-testid') && parent.getAttribute('data-testid').includes('story_')) ||
-                (parent.style.transform && parent.style.transform.includes('translateZ'))
-            );
-
-            // Critères de taille moins restrictifs pour capturer les posts complets
-            const bonnesTailles = (
-                parent.offsetHeight > 150 && parent.offsetHeight < 2000 && // Plage plus large
-                parent.offsetWidth > 400 && parent.offsetWidth < 1500 &&
-                parent.children.length >= 2 && parent.children.length <= 20
-            );
-
-            // Critères structurels pour identifier un post complet
-            const structureDePost = (
-                // Contient à la fois du texte et des éléments interactifs
-                parent.textContent.length > 50 &&
-                (parent.querySelector('[role="button"]') || parent.querySelector('button')) &&
-                // N'est pas trop global (pas le feed entier)
-                !parent.hasAttribute('id') &&
-                // A des divs avec du style (structure Facebook typique)
-                parent.querySelectorAll('div[style]').length > 3
-            );
-
-            if (estPostContainer || (bonnesTailles && structureDePost)) {
-                // Vérifier si c'est vraiment un post complet et pas un conteneur global
-                const aDesElementsDePost = (
-                    parent.querySelector('img, svg, video') ||
-                    parent.querySelector('[role="button"]') ||
-                    parent.querySelector('a[href*="facebook.com"]') ||
-                    parent.querySelector('button') ||
-                    parent.querySelector('[tabindex]')
-                );
-
-                // Vérifier qu'il n'y a pas trop de texte (éviter les conteneurs globaux)
-                const pasContainerGlobal = parent.textContent.length < 3000;
-
-                // Nouvelle vérification : s'assurer qu'on a bien le conteneur du post entier
-                const contientTexteCible = parent.textContent.toLowerCase().includes(element.textContent.toLowerCase().substring(0, 50));
-
-                if (aDesElementsDePost && pasContainerGlobal && contientTexteCible) {
-                    console.log('✅ Post parent trouvé à la tentative', tentatives, ':', {
-                        element: parent,
-                        hauteur: parent.offsetHeight,
-                        largeur: parent.offsetWidth,
-                        enfants: parent.children.length,
-                        textLength: parent.textContent.length,
-                        dataTestId: parent.getAttribute('data-testid'),
-                        dataPagelet: parent.getAttribute('data-pagelet'),
-                        role: parent.getAttribute('role'),
-                        hasDataFt: parent.hasAttribute('data-ft'),
-                        hasTransform: !!parent.style.transform
-                    });
-                    return parent;
-                } else {
-                    console.log('❌ Candidat rejeté à la tentative', tentatives, 'critères non remplis:', {
-                        aDesElementsDePost,
-                        pasContainerGlobal,
-                        contientTexteCible
-                    });
-                }
-            }
-
-            parent = parent.parentElement;
+        // Sécurités de base
+        if (!element || element === document.body || element === document.documentElement) {
+            console.warn('Élément invalide ou critique détecté');
+            return null;
         }
 
-        console.log('⚠️ Aucun parent de post trouvé après', tentatives, 'tentatives');
-        return null;
+        // Si l'élément a déjà une taille raisonnable, on le garde
+        if (element.offsetHeight > 80 && element.offsetHeight < 800 &&
+            element.offsetWidth > 300 && element.children.length <= 20) {
+            console.log('✅ Élément déjà approprié (via menu actions):', {
+                hauteur: element.offsetHeight,
+                largeur: element.offsetWidth,
+                enfants: element.children.length
+            });
+            return element;
+        }
+
+        // Sinon, remonter juste un niveau pour améliorer
+        const parent = element.parentElement;
+        if (parent && parent !== document.body && parent !== document.documentElement &&
+            parent.offsetHeight > element.offsetHeight &&
+            parent.offsetHeight < 1000 &&
+            parent.offsetWidth < window.innerWidth * 0.8) {
+
+            console.log('✅ Parent amélioré trouvé:', {
+                hauteur: parent.offsetHeight,
+                largeur: parent.offsetWidth,
+                enfants: parent.children.length
+            });
+            return parent;
+        }
+
+        return element; // Retourner l'élément original si pas d'amélioration
     }
 
     function scannerPosts() {
+        // Vérifier si le script est actif
+        if (!scriptActif) {
+            console.log('🛑 Scanner désactivé - script en pause');
+            return;
+        }
+
         // D'abord, re-masquer tous les posts déjà identifiés comme bloqués
         document.querySelectorAll('[data-blocked-by-script="true"]').forEach(element => {
             if (element.style.display !== 'none') {
@@ -219,45 +244,83 @@
             }
         });
 
-        // Sélecteurs multiples pour capturer différents types de posts
-        const selecteurs = [
-            'div[role="article"]',
-            'div[data-pagelet*="FeedUnit"]',
-            'div[data-testid*="story"]',
-            'div[data-ft]',
-            '.userContentWrapper',
-            'div[style*="transform"]',
-            // Sélecteurs plus larges
-            'div[dir="auto"] > div > div',
-            'div[data-visualcompletion="ignore-dynamic"]',
-            // Nouveaux sélecteurs pour capturer plus d'éléments
-            'div[style*="translateZ"]',
-            'div[data-testid]',
-            'div[tabindex]'
-        ];
+        console.log('🔍 DEBUG : Début du scanner avec détection par menu actions...');
 
+        // NOUVELLE APPROCHE : Utiliser les menus "trois points" comme indicateurs de posts
         const tousLesElements = new Set();
 
-        // Collecter tous les éléments possibles
-        selecteurs.forEach(selecteur => {
+        // 1. Chercher tous les boutons de menu "Actions pour cette publication"
+        const menusActions = document.querySelectorAll('div[aria-label*="Actions pour cette publication"], div[aria-label*="Actions for this post"], div[role="button"][aria-haspopup="menu"]:not([data-blocked-by-script="true"])');
+        console.log('🔍 DEBUG : ' + menusActions.length + ' menus d\'actions trouvés');
+
+        menusActions.forEach(menu => {
+            // Remonter dans la hiérarchie pour trouver le conteneur du post
+            let conteneurPost = menu;
+            let niveaux = 0;
+            const maxNiveaux = 8; // Chercher jusqu'à 8 niveaux
+
+            while (conteneurPost && niveaux < maxNiveaux) {
+                // Critères pour identifier un conteneur de post valide
+                const estConteneurPost = (
+                    conteneurPost.offsetHeight > 100 && // Au moins 100px de haut
+                    conteneurPost.offsetHeight < 1200 && // Pas plus de 1200px
+                    conteneurPost.offsetWidth > 300 && // Au moins 300px de large
+                    conteneurPost.textContent.length > 50 && // Contenu substantiel
+                    conteneurPost.children.length >= 2 && // Au moins 2 enfants
+                    conteneurPost.children.length <= 30 // Pas plus de 30 enfants
+                );
+
+                if (estConteneurPost) {
+                    const texte = conteneurPost.textContent || '';
+                    if (contientPhraseBloquee(texte)) {
+                        tousLesElements.add(conteneurPost);
+                        console.log('🎯 DEBUG : Post avec phrase bloquée trouvé via menu:', {
+                            hauteur: conteneurPost.offsetHeight,
+                            largeur: conteneurPost.offsetWidth,
+                            textLength: texte.length,
+                            niveau: niveaux,
+                            texte: texte.substring(0, 100) + '...'
+                        });
+                        break; // Sortir de la boucle une fois qu'on a trouvé le bon conteneur
+                    }
+                }
+
+                conteneurPost = conteneurPost.parentElement;
+                niveaux++;
+            }
+        });
+
+        // 2. Méthode de fallback : Scanner les sélecteurs classiques
+        const selecteursFallback = [
+            'div[role="article"]:not([data-blocked-by-script="true"])',
+            'div[data-testid]:not([data-blocked-by-script="true"])',
+            'div[data-pagelet*="FeedUnit"]:not([data-blocked-by-script="true"])'
+        ];
+
+        selecteursFallback.forEach(selecteur => {
             try {
-                const elements = document.querySelectorAll(selecteur + ':not([data-blocked-by-script="true"])');
-                elements.forEach(el => tousLesElements.add(el));
+                const elements = document.querySelectorAll(selecteur);
+                console.log(`🔍 DEBUG : Fallback "${selecteur}" -> ${elements.length} éléments`);
+
+                elements.forEach(el => {
+                    if (el.offsetHeight > 50 && el.offsetHeight < 1000 &&
+                        el.offsetWidth > 200 && el.textContent.length > 20) {
+
+                        const texte = el.textContent || '';
+                        if (contientPhraseBloquee(texte)) {
+                            tousLesElements.add(el);
+                        }
+                    }
+                });
             } catch (e) {
-                console.log('Erreur avec le sélecteur:', selecteur);
+                console.log('Erreur avec le sélecteur fallback:', selecteur, e);
             }
         });
 
-        // Scanner aussi tous les divs avec du texte (mais pas ceux déjà bloqués)
-        const divs = document.querySelectorAll('div:not([data-blocked-by-script="true"])');
-        divs.forEach(div => {
-            const texte = div.textContent || '';
-            if (texte.length > 20 && texte.length < 1000) {
-                tousLesElements.add(div);
-            }
-        });
+        console.log('🔍 Scanner : ' + tousLesElements.size + ' éléments candidats avec phrases bloquées');
 
-        // Traiter chaque élément
+        // Traiter chaque élément trouvé
+        let postsMasques = 0;
         tousLesElements.forEach(element => {
             // Éviter les éléments déjà traités
             if (elementsMarques.has(element)) return;
@@ -266,64 +329,47 @@
 
             if (texte && contientPhraseBloquee(texte)) {
                 const texteSignature = texte.substring(0, 100);
-                textesBloquesCache.add(texteSignature);
-                console.log('🔍 Texte détecté à bloquer:', texteSignature);
-                console.log('📍 Élément source:', element);
+                console.log('🎯 Phrase bloquée détectée:', texteSignature.substring(0, 50) + '...');
 
-                // Utiliser la fonction intelligente pour trouver le bon parent de post
-                const postParent = trouverPostParent(element);
-
-                // IMPORTANT: Vérifier que le parent trouvé n'est pas identique à l'élément
-                if (postParent && postParent !== element && masquerPost(postParent)) {
+                // Masquer directement l'élément trouvé (déjà optimisé via les menus)
+                if (masquerPost(element)) {
+                    postsMasques++;
                     postsTraites.add(texteSignature);
-                    console.log('✅ Post complet masqué via parent intelligent:', postParent);
-
-                    // NOUVEAU: Masquer aussi tous les éléments frères qui pourraient être des fragments
-                    if (postParent.parentElement) {
-                        const elementsFreres = postParent.parentElement.children;
-                        for (let frere of elementsFreres) {
-                            if (frere !== postParent &&
-                                frere.textContent &&
-                                (frere.textContent.includes('En voir plus') ||
-                                    frere.textContent.includes('See more') ||
-                                    contientPhraseBloquee(frere.textContent))) {
-                                masquerPost(frere);
-                                console.log('✅ Élément frère masqué:', frere);
-                            }
-                        }
-                    }
-
-                } else if (element.offsetHeight > 50 || element.offsetWidth > 200) {
-                    // Fallback : masquer l'élément lui-même s'il est assez grand
-                    if (masquerPost(element)) {
-                        postsTraites.add(texteSignature);
-                        console.log('⚠️ Fallback : élément masqué directement:', element);
-
-                        // NOUVEAU: Essayer de masquer le parent immédiat aussi
-                        if (element.parentElement &&
-                            element.parentElement.offsetHeight > element.offsetHeight) {
-                            masquerPost(element.parentElement);
-                            console.log('✅ Parent immédiat masqué aussi:', element.parentElement);
-                        }
-                    }
+                    console.log('✅ Post masqué via menu actions:', {
+                        element: element,
+                        hauteur: element.offsetHeight,
+                        largeur: element.offsetWidth,
+                        enfants: element.children.length
+                    });
                 } else {
-                    console.log('❌ Aucun masquage effectué pour:', texteSignature);
+                    console.log('❌ Échec du masquage:', element);
                 }
             }
         });
 
-        // NOUVEAU: Scanner spécifiquement pour les éléments "En voir plus" orphelins
-        const elementsEnVoirPlus = document.querySelectorAll('div:not([data-blocked-by-script="true"])');
+        console.log('📊 Scanner terminé.', {
+            candidatsAnalyses: tousLesElements.size,
+            postsMasques: postsMasques,
+            postsTraites: postsTraites.size
+        });
+    }
+
+    function nettoyerElementsOrphelins() {
+        // NETTOYAGE TRÈS LIMITÉ - seulement les "En voir plus" évidents
+        const elementsEnVoirPlus = document.querySelectorAll('div[role="button"]:not([data-blocked-by-script="true"])');
         elementsEnVoirPlus.forEach(element => {
             const texte = element.textContent || '';
-            if (texte.includes('En voir plus') || texte.includes('See more')) {
-                // Vérifier si l'élément parent contient du texte bloqué
+            if ((texte.trim() === 'En voir plus' || texte.trim() === 'See more') && texte.length < 20) {
+                // Vérifier si cet élément appartient à un post qui devrait être bloqué
                 let parent = element.parentElement;
                 let niveaux = 0;
-                while (parent && niveaux < 5) {
-                    if (parent.textContent && contientPhraseBloquee(parent.textContent)) {
+
+                while (parent && niveaux < 3) { // Seulement 3 niveaux max
+                    const texteParent = parent.textContent || '';
+                    if (texteParent && contientPhraseBloquee(texteParent) &&
+                        parent.getAttribute('role') === 'article') { // DOIT être un article
                         masquerPost(element);
-                        console.log('✅ "En voir plus" orphelin masqué:', element);
+                        console.log('🧹 "En voir plus" orphelin masqué:', element);
                         break;
                     }
                     parent = parent.parentElement;
@@ -331,54 +377,8 @@
                 }
             }
         });
-    }
 
-    function nettoyerElementsOrphelins() {
-        // Rechercher et masquer les éléments "En voir plus" orphelins
-        const selecteursOrphelins = [
-            'div[role="button"][tabindex="0"]',
-            'div.x1i10hfl', // Classes communes des boutons Facebook
-            'div[class*="x1qhh985"]'
-        ];
-
-        selecteursOrphelins.forEach(selecteur => {
-            try {
-                const elements = document.querySelectorAll(selecteur + ':not([data-blocked-by-script="true"])');
-                elements.forEach(element => {
-                    const texte = element.textContent || '';
-                    if ((texte.includes('En voir plus') || texte.includes('See more')) && texte.length < 50) {
-                        // Vérifier si cet élément appartient à un post qui devrait être bloqué
-                        let parent = element.parentElement;
-                        let trouve = false;
-                        let niveaux = 0;
-
-                        while (parent && niveaux < 8 && !trouve) {
-                            const texteParent = parent.textContent || '';
-                            if (texteParent && contientPhraseBloquee(texteParent)) {
-                                masquerPost(element);
-                                console.log('🧹 Nettoyage: "En voir plus" orphelin masqué:', element);
-                                trouve = true;
-                            }
-                            parent = parent.parentElement;
-                            niveaux++;
-                        }
-                    }
-                });
-            } catch (e) {
-                console.log('Erreur nettoyage orphelins:', e);
-            }
-        });
-
-        // Rechercher les fragments de texte restants
-        const divsPotentiels = document.querySelectorAll('div[dir="auto"]:not([data-blocked-by-script="true"])');
-        divsPotentiels.forEach(div => {
-            const texte = div.textContent || '';
-            if (texte.length > 10 && texte.length < 200 && contientPhraseBloquee(texte)) {
-                // C'est potentiellement un fragment d'un post qu'on voulait bloquer
-                masquerPost(div);
-                console.log('🧹 Nettoyage: Fragment de texte masqué:', div);
-            }
-        });
+        console.log('🧹 Nettoyage orphelins terminé (mode strict)');
     }
 
     // Observer très réactif pour les changements
@@ -397,6 +397,9 @@
         });
 
         if (nouveauxPosts) {
+            // Vérifier si le script est actif avant de scanner
+            if (!scriptActif) return;
+
             // Scanner immédiatement et plusieurs fois
             setTimeout(scannerPosts, 10);
             setTimeout(scannerPosts, 100);
@@ -409,6 +412,12 @@
 
     function initialiser() {
         console.log('Initialisation du bloqueur Facebook...');
+
+        // Vérifier si le script est actif
+        if (!scriptActif) {
+            console.log('🛑 Script désactivé - initialisation annulée');
+            return;
+        }
 
         // Scanner initial multiple
         setTimeout(scannerPosts, 100);
@@ -431,6 +440,10 @@
         // Scanner très fréquent au début puis moins
         let scanCount = 0;
         const intervalId = setInterval(() => {
+            if (!scriptActif) {
+                clearInterval(intervalId);
+                return;
+            }
             scannerPosts();
             setTimeout(nettoyerElementsOrphelins, 100);
             scanCount++;
@@ -438,8 +451,10 @@
                 clearInterval(intervalId);
                 // Passer à un scanner moins fréquent
                 setInterval(() => {
-                    scannerPosts();
-                    setTimeout(nettoyerElementsOrphelins, 100);
+                    if (scriptActif) {
+                        scannerPosts();
+                        setTimeout(nettoyerElementsOrphelins, 100);
+                    }
                 }, 5000);
             }
         }, 1000);
@@ -448,6 +463,8 @@
         let scrollTimeout;
         let lastScrollTop = 0;
         window.addEventListener('scroll', function () {
+            if (!scriptActif) return;
+
             const currentScrollTop = window.pageYOffset || document.documentElement.scrollTop;
             if (Math.abs(currentScrollTop - lastScrollTop) > 100) {
                 clearTimeout(scrollTimeout);
@@ -478,6 +495,21 @@
             display: flex;
             gap: 5px;
             align-items: center;
+        `;
+
+        const boutonOnOff = document.createElement('button');
+        boutonOnOff.innerHTML = scriptActif ? '🟢' : '🔴';
+        boutonOnOff.title = scriptActif ? 'Filtres activés - Cliquer pour désactiver' : 'Filtres désactivés - Cliquer pour activer';
+        boutonOnOff.style.cssText = `
+            background: ${scriptActif ? '#10b981' : '#ef4444'};
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         `;
 
         const boutonAjouter = document.createElement('button');
@@ -519,6 +551,19 @@
             font-size: 14px;
         `;
 
+        const boutonOptions = document.createElement('button');
+        boutonOptions.innerHTML = '⚙️';
+        boutonOptions.title = 'Options et paramètres';
+        boutonOptions.style.cssText = `
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        `;
+
         const boutonScanner = document.createElement('button');
         boutonScanner.innerHTML = '🔍';
         boutonScanner.title = 'Scanner maintenant';
@@ -545,6 +590,76 @@
             min-width: 16px;
             text-align: center;
         `;
+
+        boutonOnOff.onclick = function () {
+            // Basculer l'état
+            scriptActif = !scriptActif;
+
+            // Sauvegarder dans localStorage
+            localStorage.setItem('fcb-script-actif', scriptActif.toString());
+
+            // Feedback visuel immédiat
+            boutonOnOff.innerHTML = scriptActif ? '🟢' : '🔴';
+            boutonOnOff.title = scriptActif ? 'Filtres activés - Cliquer pour désactiver' : 'Filtres désactivés - Cliquer pour activer';
+            boutonOnOff.style.background = scriptActif ? '#10b981' : '#ef4444';
+
+            // Animation de feedback
+            boutonOnOff.style.transform = 'scale(0.9)';
+            setTimeout(() => {
+                boutonOnOff.style.transform = 'scale(1)';
+            }, 150);
+
+            // Message utilisateur
+            const message = scriptActif ? 'Filtres ACTIVÉS 🟢' : 'Filtres DÉSACTIVÉS 🔴';
+            console.log(message);
+
+            // Petite notification visuelle
+            const notification = document.createElement('div');
+            notification.textContent = message;
+            notification.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: ${scriptActif ? '#10b981' : '#ef4444'};
+                color: white;
+                padding: 15px 30px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: bold;
+                z-index: 99999;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                animation: fadeInOut 2s ease-in-out;
+            `;
+
+            // Ajouter l'animation CSS
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInOut {
+                    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+                    20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+                    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+                    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+                }
+            `;
+            document.head.appendChild(style);
+            document.body.appendChild(notification);
+
+            // Supprimer la notification après l'animation
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+                if (style.parentNode) {
+                    style.parentNode.removeChild(style);
+                }
+            }, 2000);
+
+            // Rafraîchir la page après un court délai
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        };
 
         boutonAjouter.onclick = function () {
             const nouvellePh = prompt('Ajouter une phrase à bloquer:', '');
@@ -607,6 +722,14 @@
             }
         };
 
+        boutonOptions.onclick = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            setTimeout(() => {
+                creerMenuOptions();
+            }, 100);
+        };
+
         boutonVoir.onclick = function (e) {
             // Empêcher la propagation de l'événement
             e.preventDefault();
@@ -645,9 +768,11 @@
             compteur.innerHTML = postsTraites.size;
         };
 
+        container.appendChild(boutonOnOff);
         container.appendChild(boutonAjouter);
         container.appendChild(boutonAjouterTitre);
         container.appendChild(boutonVoir);
+        container.appendChild(boutonOptions);
         container.appendChild(boutonScanner);
         container.appendChild(compteur);
 
@@ -741,6 +866,212 @@
 
         console.log('Titres extraits:', Array.from(titres));
         return Array.from(titres).slice(0, 10); // Limiter à 10 résultats
+    }
+
+    // Fonction pour créer le menu d'options
+    function creerMenuOptions() {
+        // Supprimer le menu existant si il existe
+        const existant = document.getElementById('fcb-options-modal');
+        if (existant) existant.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'fcb-options-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 99999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        `;
+
+        const contenu = document.createElement('div');
+        contenu.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 500px;
+            max-height: 80%;
+            overflow-y: auto;
+            color: black;
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        `;
+
+        const titre = document.createElement('h3');
+        titre.textContent = '⚙️ Options et Paramètres';
+        titre.style.cssText = 'margin-top: 0; color: #333; border-bottom: 2px solid #eee; padding-bottom: 10px;';
+
+        // Section options d'interface
+        const sectionInterface = document.createElement('div');
+        sectionInterface.innerHTML = '<h4 style="color: #666; margin-bottom: 15px; margin-top: 20px;">🖥️ Interface Facebook:</h4>';
+
+        // Option supprimer colonne droite
+        const optionColonneDroite = creerOptionCheckbox(
+            'Masquer la colonne de droite',
+            'Supprime la colonne de droite (publicités, suggestions) et agrandit le feed principal',
+            options.supprimerColonneDroite,
+            (checked) => {
+                options.supprimerColonneDroite = checked;
+                sauvegarderOptions();
+
+                // Feedback visuel
+                const feedback = document.createElement('div');
+                feedback.textContent = checked ? '✅ Colonne droite masquée' : '❌ Colonne droite restaurée';
+                feedback.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: ${checked ? '#10b981' : '#ef4444'};
+                    color: white;
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    z-index: 100000;
+                    font-weight: bold;
+                `;
+                document.body.appendChild(feedback);
+
+                setTimeout(() => {
+                    if (feedback.parentNode) {
+                        feedback.parentNode.removeChild(feedback);
+                    }
+                }, 2000);
+
+                // Rafraîchir la page après un délai
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
+        );
+
+        sectionInterface.appendChild(optionColonneDroite);
+
+        // Section futures options (pour l'extensibilité)
+        const sectionAutres = document.createElement('div');
+        sectionAutres.innerHTML = '<h4 style="color: #666; margin-bottom: 15px; margin-top: 20px;">🔮 Futures options:</h4>';
+
+        const infoFutures = document.createElement('p');
+        infoFutures.textContent = 'D\'autres options d\'interface et de filtrage seront ajoutées ici.';
+        infoFutures.style.cssText = 'color: #999; font-style: italic; margin: 10px 0;';
+        sectionAutres.appendChild(infoFutures);
+
+        const boutonFermer = document.createElement('button');
+        boutonFermer.textContent = 'Fermer';
+        boutonFermer.style.cssText = `
+            background: #666;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+            width: 100%;
+        `;
+        boutonFermer.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            modal.remove();
+        };
+
+        contenu.appendChild(titre);
+        contenu.appendChild(sectionInterface);
+        contenu.appendChild(sectionAutres);
+        contenu.appendChild(boutonFermer);
+        modal.appendChild(contenu);
+
+        // Empêcher la fermeture accidentelle
+        contenu.onclick = (e) => {
+            e.stopPropagation();
+        };
+
+        // Fermer en cliquant à l'extérieur
+        let modalPeutFermer = false;
+        setTimeout(() => {
+            modalPeutFermer = true;
+        }, 200);
+
+        modal.onclick = (e) => {
+            if (e.target === modal && modalPeutFermer) {
+                modal.remove();
+            }
+        };
+
+        // Fermer avec Escape
+        const fermerAvecEscape = (e) => {
+            if (e.key === 'Escape') {
+                modal.remove();
+                document.removeEventListener('keydown', fermerAvecEscape);
+            }
+        };
+        document.addEventListener('keydown', fermerAvecEscape);
+
+        document.body.appendChild(modal);
+        console.log('Menu d\'options créé');
+    }
+
+    // Fonction pour créer une option avec checkbox
+    function creerOptionCheckbox(titre, description, etatInitial, onchange) {
+        const container = document.createElement('div');
+        container.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #6366f1;
+        `;
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = etatInitial;
+        checkbox.style.cssText = `
+            margin-right: 15px;
+            margin-top: 2px;
+            transform: scale(1.2);
+            cursor: pointer;
+        `;
+
+        const contenuTexte = document.createElement('div');
+        contenuTexte.style.cssText = 'flex: 1;';
+
+        const titreLigne = document.createElement('div');
+        titreLigne.textContent = titre;
+        titreLigne.style.cssText = `
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+            cursor: pointer;
+        `;
+
+        const descriptionLigne = document.createElement('div');
+        descriptionLigne.textContent = description;
+        descriptionLigne.style.cssText = `
+            color: #666;
+            font-size: 14px;
+            line-height: 1.4;
+        `;
+
+        // Permettre de cliquer sur le titre pour toggle la checkbox
+        titreLigne.onclick = () => {
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+        };
+
+        checkbox.onchange = () => {
+            onchange(checkbox.checked);
+        };
+
+        contenuTexte.appendChild(titreLigne);
+        contenuTexte.appendChild(descriptionLigne);
+        container.appendChild(checkbox);
+        container.appendChild(contenuTexte);
+
+        return container;
     }
 
     // Fonction pour créer la fenêtre de gestion des phrases
@@ -913,9 +1244,15 @@
 
     // Démarrage
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initialiser);
+        document.addEventListener('DOMContentLoaded', function () {
+            initialiser();
+            // Appliquer les options CSS après l'initialisation
+            setTimeout(appliquerOptionsCSS, 500);
+        });
     } else {
         initialiser();
+        // Appliquer les options CSS immédiatement
+        setTimeout(appliquerOptionsCSS, 500);
     }
 
     setTimeout(creerInterface, 2000);
